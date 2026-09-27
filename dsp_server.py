@@ -194,6 +194,61 @@ def handle_bid_request():
     return jsonify(response)
 
 
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    """
+    A read-only, live status page — visit this URL in any browser to see
+    real campaign data from this actual running server (auto-refreshes
+    every 5 seconds). This is server-rendered, not a simulation.
+    """
+    rows = ""
+    for c in campaigns:
+        pct = (c["budget"] / c["budget_start"] * 100) if c["budget_start"] else 0
+        pace_ok = is_on_pace(c)
+        pace_color = "#5FAE9E" if pace_ok else "#C1554D"
+        pace_text = "on pace" if pace_ok else "THROTTLED"
+        elapsed_pct = round(ideal_spend_fraction(c) * 100, 1)
+        spent_pct = round(((c["budget_start"] - c["budget"]) / c["budget_start"]) * 100, 1) if c["budget_start"] else 0
+        prices_str = " · ".join(f"{size}: ${price:.2f}" for size, price in c["prices"].items())
+        rows += f"""
+        <div class="row">
+          <div class="name">{c['name']}</div>
+          <div class="meta">{c['country']} / {c['device']}</div>
+          <div class="prices">{prices_str}</div>
+          <div class="budget">${c['budget']:.2f} / ${c['budget_start']:.2f}
+            <div class="bar"><div class="fill" style="width:{max(0,min(100,pct))}%"></div></div>
+          </div>
+          <div class="pace" style="color:{pace_color}">{pace_text} — {elapsed_pct}% elapsed · {spent_pct}% spent</div>
+        </div>"""
+
+    html = f"""
+    <!DOCTYPE html>
+    <html><head>
+      <meta charset="UTF-8">
+      <meta http-equiv="refresh" content="5">
+      <title>Ledger DSP — Live Status</title>
+      <style>
+        body {{ background:#0E1420; color:#E7E4DA; font-family: ui-monospace, monospace; padding:24px; }}
+        h1 {{ font-size:18px; }}
+        .note {{ color:#8B94A6; font-size:12px; margin-bottom:20px; }}
+        .row {{ border:1px solid #263042; border-radius:4px; padding:12px 16px; margin-bottom:10px; background:#141B2A; }}
+        .name {{ font-weight:bold; font-size:14px; }}
+        .meta {{ color:#8B94A6; font-size:12px; margin-top:2px; }}
+        .prices {{ font-size:12px; margin-top:6px; }}
+        .budget {{ font-size:12px; margin-top:8px; }}
+        .bar {{ height:5px; background:#0A0F18; border-radius:3px; margin-top:4px; overflow:hidden; }}
+        .fill {{ height:100%; background:#E8A33D; }}
+        .pace {{ font-size:11px; margin-top:6px; font-weight:600; }}
+      </style>
+    </head><body>
+      <h1>Ledger DSP — Live Server Status</h1>
+      <div class="note">Auto-refreshes every 5s · real data from this running server · POST bid requests to /bid</div>
+      {rows}
+    </body></html>
+    """
+    return html
+
+
 @app.route("/campaigns", methods=["GET"])
 def list_campaigns():
     """A simple status view — see all campaigns and their live budgets/pacing."""
