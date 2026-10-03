@@ -18,7 +18,7 @@ HOW TO DEPLOY LIVE (free): see the deployment steps provided alongside this file
 """
 
 import time
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect, url_for
 
 app = Flask(__name__)
 
@@ -61,7 +61,19 @@ campaigns = [
         "budget_start": 25.0,
         "flight_seconds": 3600,
     },
+    {
+        "id": 4,
+        "name": "India Mobile",
+        "country": "India",
+        "device": "Mobile",
+        "prices": {"300x250": 0.90, "160x600": 0.50, "728x90": 0.70},
+        "budget": 18.0,
+        "budget_start": 18.0,
+        "flight_seconds": 3600,
+    },
 ]
+
+COUNTRIES = ["USA", "UK", "India", "Germany", "Canada", "France"]
 
 SESSION_START = time.time()
 
@@ -194,13 +206,73 @@ def handle_bid_request():
     return jsonify(response)
 
 
+@app.route("/dashboard/simulate", methods=["POST"])
+def dashboard_simulate():
+    """
+    Handles the "Send test bid" form on the dashboard. Runs a real request
+    through the exact same run_auction() function /bid uses, then redirects
+    back to /dashboard with the result so it can be shown on the page.
+    """
+    country = request.form.get("country", "USA")
+    device = request.form.get("device", "desktop")
+    size = request.form.get("size", "300x250")
+
+    req = {"id": "dashboard-test", "imp_id": "1", "country": country, "device": device, "size": size}
+    outcome = run_auction(req)
+
+    if outcome["won"]:
+        winner = outcome["campaign"]
+        msg = (f'WON — "{winner["name"]}" bid ${outcome["price"]:.2f} for a {size} slot '
+               f'in {country}/{device} ({outcome["bidder_count"]} bidder(s) competed)')
+        status = "won"
+    else:
+        reason = "a matching campaign ran out of budget or is pacing" if outcome.get("throttled_count") else "no campaign targets this country/device/size"
+        msg = f"NO BID — {reason} ({country}/{device}/{size})"
+        status = "lost"
+
+    return redirect(url_for("dashboard", msg=msg, status=status))
+
+
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
     """
-    A read-only, live status page — visit this URL in any browser to see
-    real campaign data from this actual running server (auto-refreshes
-    every 5 seconds). This is server-rendered, not a simulation.
+    A live, interactive status page — visit this URL in any browser to see
+    real campaign data from this actual running server, and use the form
+    below to send a real test bid request without needing any other tool.
+    (Auto-refreshes every 15s when idle; this is server-rendered, not a
+    browser-only simulation — every bid here runs the real /bid logic.)
     """
+    result_msg = request.args.get("msg")
+    result_status = request.args.get("status")
+    banner_html = ""
+    if result_msg:
+        color = "#5FAE9E" if result_status == "won" else "#C1554D"
+        bg = "#13241f" if result_status == "won" else "#241515"
+        banner_html = f'<div class="banner" style="border-color:{color}; background:{bg}; color:{color};">{result_msg}</div>'
+
+    country_options = "".join(f'<option value="{c}">{c}</option>' for c in COUNTRIES)
+    size_options = "".join(f'<option value="{s}">{s}</option>' for s in SIZES)
+
+    form_html = f"""
+    <form class="simform" action="/dashboard/simulate" method="post">
+      <div class="simtitle">Send a test bid request</div>
+      <div class="simrow">
+        <label>Country
+          <select name="country">{country_options}</select>
+        </label>
+        <label>Device
+          <select name="device">
+            <option value="desktop">Desktop</option>
+            <option value="mobile">Mobile</option>
+          </select>
+        </label>
+        <label>Ad size
+          <select name="size">{size_options}</select>
+        </label>
+        <button type="submit">Send bid request &rarr;</button>
+      </div>
+    </form>"""
+
     rows = ""
     for c in campaigns:
         pct = (c["budget"] / c["budget_start"] * 100) if c["budget_start"] else 0
@@ -225,12 +297,20 @@ def dashboard():
     <!DOCTYPE html>
     <html><head>
       <meta charset="UTF-8">
-      <meta http-equiv="refresh" content="5">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
       <title>Ledger DSP — Live Status</title>
       <style>
-        body {{ background:#0E1420; color:#E7E4DA; font-family: ui-monospace, monospace; padding:24px; }}
+        body {{ background:#0E1420; color:#E7E4DA; font-family: ui-monospace, monospace; padding:24px; max-width:900px; margin:0 auto; }}
         h1 {{ font-size:18px; }}
         .note {{ color:#8B94A6; font-size:12px; margin-bottom:20px; }}
+        .banner {{ border:1px solid; border-radius:4px; padding:12px 14px; font-size:13px; font-weight:600; margin-bottom:18px; }}
+        .simform {{ border:1px solid #263042; border-radius:4px; padding:14px 16px; margin-bottom:24px; background:#141B2A; }}
+        .simtitle {{ font-size:13px; font-weight:bold; margin-bottom:10px; color:#E7E4DA; }}
+        .simrow {{ display:flex; gap:10px; align-items:end; flex-wrap:wrap; }}
+        .simrow label {{ display:flex; flex-direction:column; font-size:11px; color:#8B94A6; gap:4px; }}
+        .simrow select {{ background:#0A0F18; color:#E7E4DA; border:1px solid #263042; border-radius:3px; padding:7px 8px; font-family:inherit; font-size:12px; }}
+        .simrow button {{ background:#5FAE9E; color:#071613; border:none; border-radius:3px; padding:9px 14px; font-family:inherit; font-weight:700; font-size:12px; cursor:pointer; }}
+        .simrow button:hover {{ filter:brightness(1.1); }}
         .row {{ border:1px solid #263042; border-radius:4px; padding:12px 16px; margin-bottom:10px; background:#141B2A; }}
         .name {{ font-weight:bold; font-size:14px; }}
         .meta {{ color:#8B94A6; font-size:12px; margin-top:2px; }}
@@ -242,7 +322,9 @@ def dashboard():
       </style>
     </head><body>
       <h1>Ledger DSP — Live Server Status</h1>
-      <div class="note">Auto-refreshes every 5s · real data from this running server · POST bid requests to /bid</div>
+      <div class="note">Real data from this running server · every button below sends an actual request through the live /bid logic</div>
+      {banner_html}
+      {form_html}
       {rows}
     </body></html>
     """
@@ -284,3 +366,4 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
+Add India campaign and interactive dashboard form
